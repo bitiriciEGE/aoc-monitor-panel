@@ -95,6 +95,13 @@ PROFILES = {
         "color_temp": "Normal", "red_gain": 50, "green_gain": 50, "blue_gain": 50,
         "blue_filter": 100, "volume": 70,
     },
+    "karanlik_film": {
+        "name": "Karanlik Film", "desc": "30% · Warm · Sinema",
+        "bar": "#a855f7", "bar2": "#6b21a8",
+        "icon": "🎬", "brightness": 30, "contrast": 55,
+        "color_temp": "User", "red_gain": 62, "green_gain": 50, "blue_gain": 32,
+        "blue_filter": 40, "volume": 60,
+    },
 }
 
 

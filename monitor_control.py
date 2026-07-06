@@ -73,7 +73,8 @@ VCP_VOLUME      = 0x62
 VCP_POWER       = 0xD6
 VCP_GAMING_MODE = 0xDC
 VCP_SHARPNESS   = 0x87
-VCP_GAMMA       = 0x72
+VCP_MUTE        = 0x8D
+VCP_IMG_RATIO   = 0x86
 VCP_RESTORE_ALL = 0x04
 VCP_RESTORE_LUM = 0x05
 VCP_RESTORE_CLR = 0x08
@@ -86,14 +87,16 @@ COLOR_TEMP_PRESETS = {
     "User":   (0x0B, "#6b6b78", "#2c2c3a", "RGB"),
 }
 
+# Canli yazma testiyle dogrulandi: monitor 0x0B'yi kabul edip 0x80'i reddediyor
 GAMING_MODES = {
     "Standard": 0x00, "FPS": 0x0B, "RTS": 0x0C,
     "Racing": 0x0D, "Gamer 1": 0x0E, "Gamer 2": 0x0F, "Gamer 3": 0x10,
 }
 
+IMG_RATIOS = {"1:1": 0x01, "Aspect": 0x02, "Full": 0x05}
+
 INPUT_SOURCES = {"DisplayPort": 0x0F, "HDMI 1": 0x11, "HDMI 2": 0x12}
 
-GAMMA_PRESETS = {"Gamma 1": 0x01, "Gamma 2": 0x02, "Gamma 3": 0x03}
 
 PROFILES = {
     "sabah_ders": {
@@ -181,7 +184,7 @@ class MonitorDDC:
             "brightness": 75, "contrast": 50, "color_temp": 0x06,
             "red_gain": 50, "green_gain": 50, "blue_gain": 50,
             "volume": 50, "blue_filter": 100, "gaming_mode": 0x00,
-            "sharpness": 50, "gamma": 0x01,
+            "sharpness": 50, "muted": False, "img_ratio": 0x02,
         }
         saved = _load_json(STATE_FILE, {}).get(str(number), {})
         for k, v in saved.items():
@@ -356,10 +359,14 @@ class MonitorDDC:
         self._sim["sharpness"] = v
         return self._set_vcp(VCP_SHARPNESS, v)
 
-    def get_gamma(self): return self._sim["gamma"]
-    def set_gamma(self, vcp):
-        self._sim["gamma"] = vcp
-        return self._set_vcp(VCP_GAMMA, vcp)
+    def get_muted(self): return self._sim["muted"]
+    def set_muted(self, muted: bool):
+        self._sim["muted"] = bool(muted)
+        return self._set_vcp(VCP_MUTE, 0x01 if muted else 0x02)
+
+    def set_img_ratio(self, vcp):
+        self._sim["img_ratio"] = vcp
+        return self._set_vcp(VCP_IMG_RATIO, vcp)
 
     def set_gaming_mode(self, vcp):
         self._sim["gaming_mode"] = vcp
@@ -615,7 +622,7 @@ class App:
         self._temp_btns    = [[] for _ in range(n)]
         self._profile_btns = [[] for _ in range(n)]
         self._profile_grids = [None] * n
-        self._gamma_btns   = [[] for _ in range(n)]
+        self._ratio_btns   = [[] for _ in range(n)]
 
         self.custom_profiles = _load_json(CUSTOM_FILE, {})
         self.apply_both = tk.BooleanVar(value=False)
@@ -991,15 +998,15 @@ class App:
         slider_row(fi, "Keskinlik", mon.get_sharpness, mon.set_sharpness,
                    AMBER, AMBER_B, AMBER, bg=SURFACE, hint="VCP 0x87")
 
-        section_header(p, "Gamma", "VCP 0x72", bg=BG)
+        section_header(p, "Goruntu Orani", "VCP 0x86", bg=BG)
         gm_row = tk.Frame(p, bg=BG)
         gm_row.pack(fill="x", pady=(0, 4))
-        self._gamma_btns[idx] = []
-        for label, vcp in GAMMA_PRESETS.items():
+        self._ratio_btns[idx] = []
+        for label, vcp in IMG_RATIOS.items():
             btn = self._seg_btn(gm_row, label,
-                                lambda v=vcp, m=mon, ix=idx: self._set_gamma(v, m, ix))
+                                lambda v=vcp, m=mon, ix=idx: self._set_ratio(v, m, ix))
             btn.pack(side="left", padx=(0, 6), pady=2)
-            self._gamma_btns[idx].append((btn, vcp))
+            self._ratio_btns[idx].append((btn, vcp))
 
         section_header(p, "Renk Sicakligi", "VCP 0x14", bg=BG)
         self._temp_panel(p, mon, idx)
@@ -1036,19 +1043,37 @@ class App:
         slider_row(bi, "Mavi Isik Filtresi", mon.get_blue_filter, mon.set_blue_filter,
                    ORANGE, ORANGE_B, "#ffa173", bg=SURFACE)
 
-        section_header(p, "Ses", "VCP 0x62", bg=BG)
+        section_header(p, "Ses", "VCP 0x62 / 0x8D", bg=BG)
         sf = tk.Frame(p, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER)
         sf.pack(fill="x", pady=(0, 4))
         si = tk.Frame(sf, bg=SURFACE); si.pack(fill="x", padx=14, pady=10)
         slider_row(si, "Ses Seviyesi", mon.get_volume, mon.set_volume,
                    CYAN, CYAN_BG, CYAN, bg=SURFACE)
+        tk.Frame(si, bg=BORDER, height=1).pack(fill="x", pady=6)
+        mute_btn = tk.Button(si, text="🔊  Sesi Kapat",
+                             bg=SURFACE, fg=FG_DIM, font=(SANS, 9, "bold"),
+                             relief="flat", cursor="hand2", padx=10, pady=6,
+                             highlightthickness=1, highlightbackground=BORDER,
+                             activebackground=CARD, activeforeground=FG)
+        def toggle_mute():
+            muted = not mon.get_muted()
+            mon.set_muted(muted)
+            if muted:
+                mute_btn.config(text="🔇  Sesi Ac", bg="#1c0810", fg="#ff7c92",
+                                highlightbackground=RED_B)
+            else:
+                mute_btn.config(text="🔊  Sesi Kapat", bg=SURFACE, fg=FG_DIM,
+                                highlightbackground=BORDER)
+        mute_btn.config(command=toggle_mute)
+        mute_btn.pack(anchor="w")
 
         section_header(p, "OSD Uzerinden Degistirilebilir", bg=BG)
-        tk.Label(p, text="DDC/CI desteklenmez — monitör OSD menüsünden ayarlayin",
+        tk.Label(p, text="AOC ozel protokolu (E3/F3) gerektirir — monitör OSD menüsünden ayarlayin",
                  bg=BG, fg=FG_MUTE, font=(MONO, 8), anchor="w").pack(fill="x", pady=(0, 6))
         osd_card = tk.Frame(p, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
         osd_card.pack(fill="x", pady=(0, 16))
         OSD_ITEMS = [
+            ("Gamma",          "1.8 / 2.0 / 2.2 / 2.4 / 2.6"),
             ("Dark Boost",     "Off / L1 / L2 / L3"),
             ("DCR",            "Dynamic Contrast Ratio"),
             ("HDR Modu",       "Off / DisplayHDR / Picture / Movie / Game"),
@@ -1057,7 +1082,6 @@ class App:
             ("Adaptive-Sync",  "On / Off"),
             ("Game Color",     "0–20"),
             ("Shadow Control", "0–20"),
-            ("Image Ratio",    "Full / Aspect / 1:1"),
             ("Dial Point",     "Sniper Scope / Frame Counter"),
         ]
         for name, opts in OSD_ITEMS:
@@ -1181,9 +1205,9 @@ class App:
                    f"Renk: {p['color_temp']}  ·  Mavi filtre: {p['blue_filter']}%")
             self.root.after(0, lambda: messagebox.showinfo("Profil Uygulandi", msg))
 
-    def _set_gamma(self, vcp, mon, idx):
-        mon.set_gamma(vcp)
-        for btn, v in self._gamma_btns[idx]:
+    def _set_ratio(self, vcp, mon, idx):
+        mon.set_img_ratio(vcp)
+        for btn, v in self._ratio_btns[idx]:
             if v == vcp:
                 btn.config(bg=CYAN_BG, fg=CYAN, highlightbackground=CYAN_B)
             else:

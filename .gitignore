@@ -31,3 +31,4 @@ desktop.ini
 # Logs / temp
 *.log
 *.tmp
+*.spec

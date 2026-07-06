@@ -1,14 +1,39 @@
 """
-AOC Monitor Kontrol Paneli v5.1
+AOC Monitor Kontrol Paneli v6.0
 Desteklenen model: AOC Q27G42ZE (27" QHD 180Hz)
 DDC/CI via Windows dxva2.dll — her komut icin taze handle (handle-sharing duzeltmesi)
 Mavi Isik Filtresi: GDI Gamma Ramp (DDC/CI bagimsiz)
+Ayar kalicilik + ozel profiller: %APPDATA%\\AOCMonitorPanel
 """
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 import ctypes
 from ctypes import wintypes, windll, byref
 import threading
+import json
+import os
+
+APPDATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")),
+                           "AOCMonitorPanel")
+STATE_FILE    = os.path.join(APPDATA_DIR, "state.json")
+CUSTOM_FILE   = os.path.join(APPDATA_DIR, "custom_profiles.json")
+
+
+def _load_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def _save_json(path, data):
+    try:
+        os.makedirs(APPDATA_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 # ══════════════════════════════════════════════════════════════════════
 # Design tokens
@@ -47,6 +72,8 @@ VCP_INPUT       = 0x60
 VCP_VOLUME      = 0x62
 VCP_POWER       = 0xD6
 VCP_GAMING_MODE = 0xDC
+VCP_SHARPNESS   = 0x87
+VCP_GAMMA       = 0x72
 VCP_RESTORE_ALL = 0x04
 VCP_RESTORE_LUM = 0x05
 VCP_RESTORE_CLR = 0x08
@@ -65,6 +92,8 @@ GAMING_MODES = {
 }
 
 INPUT_SOURCES = {"DisplayPort": 0x0F, "HDMI 1": 0x11, "HDMI 2": 0x12}
+
+GAMMA_PRESETS = {"Gamma 1": 0x01, "Gamma 2": 0x02, "Gamma 3": 0x03}
 
 PROFILES = {
     "sabah_ders": {
@@ -102,6 +131,34 @@ PROFILES = {
         "color_temp": "User", "red_gain": 62, "green_gain": 50, "blue_gain": 32,
         "blue_filter": 40, "volume": 60,
     },
+    "gece_okuma": {
+        "name": "Gece Okuma", "desc": "15% · Cok Sicak · Goz",
+        "bar": "#f59e0b", "bar2": "#b45309",
+        "icon": "📖", "brightness": 15, "contrast": 40,
+        "color_temp": "User", "red_gain": 62, "green_gain": 45, "blue_gain": 25,
+        "blue_filter": 30, "volume": 25,
+    },
+    "tasarim_srgb": {
+        "name": "Tasarim / sRGB", "desc": "70% · sRGB · Dogru renk",
+        "bar": "#22d3ee", "bar2": "#0e7490",
+        "icon": "🎨", "brightness": 70, "contrast": 50,
+        "color_temp": "sRGB", "red_gain": 50, "green_gain": 50, "blue_gain": 50,
+        "blue_filter": 100, "volume": 40,
+    },
+    "gunluk": {
+        "name": "Gunluk Kullanim", "desc": "60% · Normal · Dengeli",
+        "bar": "#4ade80", "bar2": "#15803d",
+        "icon": "🌐", "brightness": 60, "contrast": 50,
+        "color_temp": "Normal", "red_gain": 50, "green_gain": 50, "blue_gain": 50,
+        "blue_filter": 85, "volume": 45,
+    },
+    "enerji": {
+        "name": "Enerji Tasarrufu", "desc": "20% · Normal · Eco",
+        "bar": "#94a3b8", "bar2": "#475569",
+        "icon": "🔋", "brightness": 20, "contrast": 45,
+        "color_temp": "Normal", "red_gain": 50, "green_gain": 50, "blue_gain": 50,
+        "blue_filter": 70, "volume": 20,
+    },
 }
 
 
@@ -124,8 +181,24 @@ class MonitorDDC:
             "brightness": 75, "contrast": 50, "color_temp": 0x06,
             "red_gain": 50, "green_gain": 50, "blue_gain": 50,
             "volume": 50, "blue_filter": 100, "gaming_mode": 0x00,
+            "sharpness": 50, "gamma": 0x01,
         }
+        saved = _load_json(STATE_FILE, {}).get(str(number), {})
+        for k, v in saved.items():
+            if k in self._sim and isinstance(v, int):
+                self._sim[k] = v
         self.available = self._check()
+
+    def save_state(self):
+        state = _load_json(STATE_FILE, {})
+        state[str(self.number)] = self._sim
+        _save_json(STATE_FILE, state)
+
+    def restore_saved(self):
+        """Kayitli mavi filtre gamma ramp'ini acilista yeniden uygular
+        (Windows yeniden baslatinca ramp sifirlanir)."""
+        if self._sim["blue_filter"] < 100:
+            self.set_blue_filter(self._sim["blue_filter"])
 
     # ── Internal helpers ─────────────────────────────────────────────
 
@@ -277,6 +350,17 @@ class MonitorDDC:
         self._sim["volume"] = v
         return self._set_vcp(VCP_VOLUME, v)
 
+    def get_sharpness(self): return self._sim["sharpness"]
+    def set_sharpness(self, v: int) -> bool:
+        v = max(0, min(100, v))
+        self._sim["sharpness"] = v
+        return self._set_vcp(VCP_SHARPNESS, v)
+
+    def get_gamma(self): return self._sim["gamma"]
+    def set_gamma(self, vcp):
+        self._sim["gamma"] = vcp
+        return self._set_vcp(VCP_GAMMA, vcp)
+
     def set_gaming_mode(self, vcp):
         self._sim["gaming_mode"] = vcp
         return self._set_vcp(VCP_GAMING_MODE, vcp)
@@ -330,6 +414,7 @@ class MonitorDDC:
         self.set_blue_filter(p.get("blue_filter", 100))
         self.set_volume(p.get("volume", 50))
         self._apply_ok = b_ok and c_ok
+        self.save_state()
         return True
 
 
@@ -484,8 +569,24 @@ class App:
         self._input_btns   = [[], []]
         self._temp_btns    = [[], []]
         self._profile_btns = [[], []]
+        self._profile_grids = [None, None]
+        self._gamma_btns   = [[], []]
+
+        self.custom_profiles = _load_json(CUSTOM_FILE, {})
+        self.apply_both = tk.BooleanVar(value=False)
 
         self._build()
+
+        # Kayitli mavi filtreyi acilista geri yukle
+        for m in self.monitors:
+            m.restore_saved()
+
+        root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self):
+        for m in self.monitors:
+            m.save_state()
+        self.root.destroy()
 
     # ── Window structure ──────────────────────────────────────────────
 
@@ -519,7 +620,7 @@ class App:
 
         tk.Label(bar, text="AOC Monitor Kontrol Paneli",
                  font=(SANS, 10), bg="#0e0f1b", fg=FG_DIM).pack(side="left", padx=4)
-        mono(bar, "v5.1 · py3", 9, FG_MUTE, "#0e0f1b").pack(side="right", padx=14)
+        mono(bar, "v6.0 · py3", 9, FG_MUTE, "#0e0f1b").pack(side="right", padx=14)
 
         bar.bind("<Button-1>",
                  lambda e: setattr(self, "_drag_xy",
@@ -633,13 +734,31 @@ class App:
 
     def _left_panel(self, parent, mon, idx):
         section_header(parent, "Hizli Profiller", bg=BG)
+
+        both_row = tk.Frame(parent, bg=BG)
+        both_row.pack(fill="x", pady=(0, 4))
+        tk.Checkbutton(both_row, text="Iki monitore de uygula",
+                       variable=self.apply_both,
+                       bg=BG, fg=FG_DIM, selectcolor=SURFACE,
+                       activebackground=BG, activeforeground=FG,
+                       font=(SANS, 9), cursor="hand2").pack(side="left")
+
         grid = tk.Frame(parent, bg=BG)
         grid.pack(fill="x", pady=(0, 4))
         grid.columnconfigure(0, weight=1)
         grid.columnconfigure(1, weight=1)
+        self._profile_grids[idx] = grid
+        self._fill_profile_grid(grid, mon, idx)
 
-        for col_i, (key, p) in enumerate(PROFILES.items()):
-            self._profile_card(grid, p, mon, idx, col_i // 2, col_i % 2)
+        save_row = tk.Frame(parent, bg=BG)
+        save_row.pack(fill="x", pady=(0, 4))
+        tk.Button(save_row, text="💾  Mevcut Ayarlari Profil Yap",
+                  command=lambda: self._save_custom_profile(mon),
+                  bg=SURFACE, fg=FG_DIM, font=(SANS, 9, "bold"),
+                  relief="flat", cursor="hand2", padx=8, pady=6,
+                  highlightthickness=1, highlightbackground=BORDER,
+                  activebackground=CARD, activeforeground=CYAN
+                  ).pack(fill="x")
 
         section_header(parent, "Gaming Mode", "VCP 0xDC", bg=BG)
         chip_wrap = tk.Frame(parent, bg=BG)
@@ -681,7 +800,50 @@ class App:
                       activebackground=BORDER
                       ).pack(side="left", padx=(0, 6))
 
-    def _profile_card(self, grid, p, mon, idx, row, col):
+    def _fill_profile_grid(self, grid, mon, idx):
+        for w in grid.winfo_children():
+            w.destroy()
+        items = list(PROFILES.items()) + list(self.custom_profiles.items())
+        for col_i, (key, p) in enumerate(items):
+            custom = key in self.custom_profiles
+            self._profile_card(grid, p, mon, idx, col_i // 2, col_i % 2,
+                               custom_key=key if custom else None)
+
+    def _save_custom_profile(self, mon):
+        name = simpledialog.askstring(
+            "Ozel Profil", "Profil adi:", parent=self.root)
+        if not name:
+            return
+        s = mon._sim
+        temp_key = next((k for k, v in COLOR_TEMP_PRESETS.items()
+                         if v[0] == s["color_temp"]), "Normal")
+        key = "custom_" + "".join(c if c.isalnum() else "_" for c in name.lower())
+        self.custom_profiles[key] = {
+            "name": name, "desc": f"{s['brightness']}% · {temp_key} · Ozel",
+            "bar": "#e879f9", "bar2": "#a21caf",
+            "icon": "⭐", "brightness": s["brightness"], "contrast": s["contrast"],
+            "color_temp": temp_key, "red_gain": s["red_gain"],
+            "green_gain": s["green_gain"], "blue_gain": s["blue_gain"],
+            "blue_filter": s["blue_filter"], "volume": s["volume"],
+        }
+        _save_json(CUSTOM_FILE, self.custom_profiles)
+        self._refresh_profile_grids()
+
+    def _delete_custom_profile(self, key):
+        p = self.custom_profiles.get(key)
+        if not p:
+            return
+        if messagebox.askyesno("Profil Sil", f"'{p['name']}' profili silinsin mi?"):
+            del self.custom_profiles[key]
+            _save_json(CUSTOM_FILE, self.custom_profiles)
+            self._refresh_profile_grids()
+
+    def _refresh_profile_grids(self):
+        for i, grid in enumerate(self._profile_grids):
+            if grid is not None:
+                self._fill_profile_grid(grid, self.monitors[i], i)
+
+    def _profile_card(self, grid, p, mon, idx, row, col, custom_key=None):
         frm = tk.Frame(grid, bg=CARD, cursor="hand2",
                        highlightthickness=1, highlightbackground=BORDER)
         frm.grid(row=row, column=col,
@@ -712,6 +874,9 @@ class App:
 
         for w in [frm, inner, top] + list(inner.winfo_children()):
             w.bind("<Button-1>", lambda e: click())
+            if custom_key:
+                w.bind("<Button-3>",
+                       lambda e, k=custom_key: self._delete_custom_profile(k))
 
     def _chip(self, parent, label, command):
         btn = tk.Button(parent, text=label,
@@ -768,6 +933,19 @@ class App:
         tk.Frame(fi, bg=BORDER, height=1).pack(fill="x", pady=6)
         slider_row(fi, "Kontrast", mon.get_contrast, mon.set_contrast,
                    CYAN, CYAN_BG, CYAN, bg=SURFACE)
+        tk.Frame(fi, bg=BORDER, height=1).pack(fill="x", pady=6)
+        slider_row(fi, "Keskinlik", mon.get_sharpness, mon.set_sharpness,
+                   AMBER, AMBER_B, AMBER, bg=SURFACE, hint="VCP 0x87")
+
+        section_header(p, "Gamma", "VCP 0x72", bg=BG)
+        gm_row = tk.Frame(p, bg=BG)
+        gm_row.pack(fill="x", pady=(0, 4))
+        self._gamma_btns[idx] = []
+        for label, vcp in GAMMA_PRESETS.items():
+            btn = self._seg_btn(gm_row, label,
+                                lambda v=vcp, m=mon, ix=idx: self._set_gamma(v, m, ix))
+            btn.pack(side="left", padx=(0, 6), pady=2)
+            self._gamma_btns[idx].append((btn, vcp))
 
         section_header(p, "Renk Sicakligi", "VCP 0x14", bg=BG)
         self._temp_panel(p, mon, idx)
@@ -817,8 +995,6 @@ class App:
         osd_card = tk.Frame(p, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
         osd_card.pack(fill="x", pady=(0, 16))
         OSD_ITEMS = [
-            ("Keskinlik",      "Sharpness"),
-            ("Gamma",          "1.8 / 2.0 / 2.2 / 2.4 / 2.6"),
             ("Dark Boost",     "Off / L1 / L2 / L3"),
             ("DCR",            "Dynamic Contrast Ratio"),
             ("HDR Modu",       "Off / DisplayHDR / Picture / Movie / Game"),
@@ -936,7 +1112,11 @@ class App:
     # ── Profile apply ─────────────────────────────────────────────────
 
     def _apply_profile(self, p: dict, mon: MonitorDDC):
-        mon.apply_profile(p)
+        if self.apply_both.get():
+            for m in self.monitors:
+                m.apply_profile(p)
+        else:
+            mon.apply_profile(p)
         mode = "DDC-CI" if mon.available else "Simulasyon"
         if not mon._apply_ok and mon.available:
             self.root.after(0, lambda: messagebox.showerror(
@@ -946,6 +1126,14 @@ class App:
                    f"Parlaklik: {p['brightness']}%  ·  Kontrast: {p['contrast']}%\n"
                    f"Renk: {p['color_temp']}  ·  Mavi filtre: {p['blue_filter']}%")
             self.root.after(0, lambda: messagebox.showinfo("Profil Uygulandi", msg))
+
+    def _set_gamma(self, vcp, mon, idx):
+        mon.set_gamma(vcp)
+        for btn, v in self._gamma_btns[idx]:
+            if v == vcp:
+                btn.config(bg=CYAN_BG, fg=CYAN, highlightbackground=CYAN_B)
+            else:
+                btn.config(bg=SURFACE, fg=FG_DIM, highlightbackground=BORDER)
 
     def _set_gaming(self, vcp, mon, idx):
         mon.set_gaming_mode(vcp)

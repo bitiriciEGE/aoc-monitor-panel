@@ -419,6 +419,47 @@ class MonitorDDC:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Monitor Group — "Ikisi Birden" sekmesi icin proxy
+# get_* cagrilari 1. monitorden okur, set_* / restore_* / apply_profile
+# cagrilari tum monitorlere ayni anda gider.
+# ══════════════════════════════════════════════════════════════════════
+class MonitorGroup:
+    def __init__(self, monitors):
+        self.monitors = monitors
+        self.number = 0
+
+    @property
+    def available(self):
+        return any(m.available for m in self.monitors)
+
+    @property
+    def _apply_ok(self):
+        return all(m._apply_ok for m in self.monitors)
+
+    @property
+    def _last_err(self):
+        return " / ".join(m._last_err for m in self.monitors if m._last_err)
+
+    @property
+    def _sim(self):
+        return self.monitors[0]._sim
+
+    def __getattr__(self, name):
+        if name.startswith("get_"):
+            return getattr(self.monitors[0], name)
+        if name.startswith(("set_", "restore")) or name in ("apply_profile",
+                                                            "save_state"):
+            def broadcast(*a, **kw):
+                ok = True
+                for m in self.monitors:
+                    r = getattr(m, name)(*a, **kw)
+                    ok = ok and (r is not False)
+                return ok
+            return broadcast
+        raise AttributeError(name)
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Custom Canvas Slider
 # ══════════════════════════════════════════════════════════════════════
 class CSlider(tk.Canvas):
@@ -564,13 +605,17 @@ class App:
                      borderwidth=0,   arrowcolor=FG_MUTE)
 
         self.monitors      = [MonitorDDC(1), MonitorDDC(2)]
+        self.group         = MonitorGroup(self.monitors)
+        # sekme hedefleri: Monitor 1, Monitor 2, Ikisi Birden
+        self.tab_targets   = self.monitors + [self.group]
+        n = len(self.tab_targets)
         self._active_tab   = 0
-        self._gaming_btns  = [[], []]
-        self._input_btns   = [[], []]
-        self._temp_btns    = [[], []]
-        self._profile_btns = [[], []]
-        self._profile_grids = [None, None]
-        self._gamma_btns   = [[], []]
+        self._gaming_btns  = [[] for _ in range(n)]
+        self._input_btns   = [[] for _ in range(n)]
+        self._temp_btns    = [[] for _ in range(n)]
+        self._profile_btns = [[] for _ in range(n)]
+        self._profile_grids = [None] * n
+        self._gamma_btns   = [[] for _ in range(n)]
 
         self.custom_profiles = _load_json(CUSTOM_FILE, {})
         self.apply_both = tk.BooleanVar(value=False)
@@ -597,7 +642,7 @@ class App:
         self._tab_frames = []
         self._content = tk.Frame(self.root, bg=BG)
         self._content.pack(fill="both", expand=True)
-        for i in range(2):
+        for i in range(len(self.tab_targets)):
             f = tk.Frame(self._content, bg=BG)
             self._tab_frames.append(f)
             self._build_tab(f, i)
@@ -679,11 +724,15 @@ class App:
         inner.pack(side="left", padx=14, pady=10)
 
         self._tab_btns = []
-        for i, mon in enumerate(self.monitors):
-            sim = "" if mon.available else " (Sim)"
+        for i, mon in enumerate(self.tab_targets):
+            if isinstance(mon, MonitorGroup):
+                label = "⇄ Ikisi Birden"
+            else:
+                sim = "" if mon.available else " (Sim)"
+                label = f"Monitor {i + 1}{sim}"
             btn = tk.Button(
                 inner,
-                text=f"  Monitor {i + 1}{sim}  ",
+                text=f"  {label}  ",
                 font=(SANS, 9),
                 relief="flat", cursor="hand2",
                 command=lambda idx=i: self._show_tab(idx)
@@ -714,7 +763,7 @@ class App:
     # ── Monitor Tab ───────────────────────────────────────────────────
 
     def _build_tab(self, parent, idx: int):
-        mon = self.monitors[idx]
+        mon = self.tab_targets[idx]
         columns = tk.Frame(parent, bg=BG)
         columns.pack(fill="both", expand=True)
 
@@ -737,11 +786,16 @@ class App:
 
         both_row = tk.Frame(parent, bg=BG)
         both_row.pack(fill="x", pady=(0, 4))
-        tk.Checkbutton(both_row, text="Iki monitore de uygula",
-                       variable=self.apply_both,
-                       bg=BG, fg=FG_DIM, selectcolor=SURFACE,
-                       activebackground=BG, activeforeground=FG,
-                       font=(SANS, 9), cursor="hand2").pack(side="left")
+        if isinstance(mon, MonitorGroup):
+            tk.Label(both_row, text="⇄  Bu sekmedeki her ayar iki monitore birden uygulanir",
+                     bg="#051c24", fg=CYAN, font=(SANS, 9),
+                     padx=8, pady=4, anchor="w").pack(fill="x")
+        else:
+            tk.Checkbutton(both_row, text="Iki monitore de uygula",
+                           variable=self.apply_both,
+                           bg=BG, fg=FG_DIM, selectcolor=SURFACE,
+                           activebackground=BG, activeforeground=FG,
+                           font=(SANS, 9), cursor="hand2").pack(side="left")
 
         grid = tk.Frame(parent, bg=BG)
         grid.pack(fill="x", pady=(0, 4))
@@ -841,7 +895,7 @@ class App:
     def _refresh_profile_grids(self):
         for i, grid in enumerate(self._profile_grids):
             if grid is not None:
-                self._fill_profile_grid(grid, self.monitors[i], i)
+                self._fill_profile_grid(grid, self.tab_targets[i], i)
 
     def _profile_card(self, grid, p, mon, idx, row, col, custom_key=None):
         frm = tk.Frame(grid, bg=CARD, cursor="hand2",

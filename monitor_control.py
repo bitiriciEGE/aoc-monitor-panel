@@ -113,6 +113,13 @@ PROFILES = {
         "color_temp": "Cool", "red_gain": 50, "green_gain": 50, "blue_gain": 50,
         "blue_filter": 100, "volume": 50,
     },
+    "yumusak_sabah": {
+        "name": "Yumusak Sabah", "desc": "45% · Sicak · Bas dostu",
+        "bar": "#fb923c", "bar2": "#c2410c",
+        "icon": "🌅", "brightness": 45, "contrast": 48,
+        "color_temp": "User", "red_gain": 56, "green_gain": 52, "blue_gain": 42,
+        "blue_filter": 60, "volume": 35,
+    },
     "aksam_ders": {
         "name": "Aksam Dersi", "desc": "55% · User · Dusuk Mavi",
         "bar": "#ff6b2b", "bar2": "#c2410c",
